@@ -5,17 +5,6 @@ HEIGHT = 720
 FPS = 60
 TILE = 32
 
-# --- NES-style render pipeline ---
-# All world drawing happens at the WIDTH x HEIGHT logical resolution. Before
-# being shown to the player it is downsampled to RENDER_W x RENDER_H with
-# nearest-neighbor (which pixelates everything in one step), palette-snapped,
-# and upscaled back to WIDTH x HEIGHT. Effects in atmosphere/lighting/
-# hunger_effects use the PIXEL_SCALE so their dither blocks survive the
-# downsample.
-RENDER_W = 320
-RENDER_H = 240
-PIXEL_SCALE = WIDTH // RENDER_W  # 4: every "logical pixel" is 4 world pixels.
-
 # --- Muted, desaturated palette ---
 BLACK       = (8, 8, 10)
 NEAR_BLACK  = (16, 16, 20)
@@ -73,27 +62,3 @@ HUNGER_UNRAVEL   = 99
 
 # --- Save path ---
 SAVE_PATH = "save.json"
-
-# --- NES-style quantization palette ---
-# A curated 16-color subset derived from the existing muted palette. Every
-# pixel of the final low-res frame is snapped to its nearest entry here.
-# Keeps the "no vibrant colors" tone (CLAUDE.md) intact while delivering an
-# NES-style limited-palette look.
-NES_PALETTE = (
-    BLACK,
-    NEAR_BLACK,
-    DARK_GRAY,
-    GRAY,
-    LIGHT_GRAY,
-    BONE,
-    SNOW,
-    SNOW_DEEP,
-    BLOOD_RED,
-    DULL_RED,
-    COAT_BROWN,
-    WOOD_DARK,
-    TREE_DARK,
-    TREE,
-    DEAD_GRASS,
-    WINDOW,
-)
