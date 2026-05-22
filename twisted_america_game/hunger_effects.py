@@ -140,14 +140,19 @@ class HungerFx:
             vig_alpha = min(180, int((h - 25) * 2.4))
             self._draw_vignette(surf, vig_alpha)
 
-        # Random pixel shift / noise — pixel dust
+        # Random pixel shift / noise — pixel dust.
+        # Snap to PIXEL_SCALE blocks so each speck survives the downsample
+        # as a single low-res pixel; otherwise set_at(1px) would vanish.
         if h > 50:
+            ps = PIXEL_SCALE
             count = int((h - 50) * 4)
+            cells_x = WIDTH // ps
+            cells_y = (HEIGHT - 100) // ps
             for _ in range(count):
-                x = random.randint(0, WIDTH - 1)
-                y = random.randint(0, HEIGHT - 101)
+                cx = random.randint(0, cells_x - 1) * ps
+                cy = random.randint(0, cells_y - 1) * ps
                 c = random.choice([(20, 20, 24), (180, 180, 180), (50, 12, 12)])
-                surf.set_at((x, y), c)
+                pygame.draw.rect(surf, c, (cx, cy, ps, ps))
 
         # Chromatic aberration bands at the screen edges (cheap fake)
         if h > 60:
@@ -171,7 +176,7 @@ class HungerFx:
 
         # whisper text
         if self.active_whisper:
-            s = font.render(self.active_whisper, True, (160, 40, 40))
+            s = font.render(self.active_whisper, False, (160, 40, 40))
             jx = random.randint(-2, 2)
             jy = random.randint(-2, 2)
             wx = random.randint(80, WIDTH - 200)
@@ -237,13 +242,17 @@ class HungerFx:
         surf.blit(s, (0, 0))
 
     def _draw_drips(self, surf, hunger):
-        # vertical reddish streaks from the top
+        # Vertical reddish streaks from the top — drawn as PIXEL_SCALE-wide
+        # chunky bars so they read as solid drips after downsample, with a
+        # short scattered tail to suggest dripping motion.
         random.seed(int(self.time * 1.5))
+        ps = PIXEL_SCALE
         count = int((hunger - 75) / 2) + 1
+        cells_x = WIDTH // ps
         for _ in range(count):
-            x = random.randint(0, WIDTH - 1)
-            length = random.randint(20, 80)
-            for y in range(length):
-                a = max(0, 200 - y * 4)
-                surf.set_at((x, y), (100 + random.randint(0, 30), 10, 10))
+            x = random.randint(0, cells_x - 1) * ps
+            length_cells = random.randint(20 // ps, 80 // ps)
+            for cy in range(length_cells):
+                col = (100 + random.randint(0, 30), 10, 10)
+                pygame.draw.rect(surf, col, (x, cy * ps, ps, ps))
         random.seed()  # restore entropy

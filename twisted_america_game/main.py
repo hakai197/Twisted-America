@@ -28,6 +28,7 @@ from lighting import Lighting
 from atmosphere import Atmosphere
 import assets
 import dialogue_data
+import nes_post
 
 
 # ============================================================ DIALOGUE RUNNER
@@ -137,6 +138,15 @@ class Game:
         pygame.init()
         pygame.display.set_caption("Twisted America: Hunger")
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        # NES-style render pipeline:
+        #   world_buf  — every existing draw call targets this hi-res buffer
+        #   low_res    — world_buf nearest-downsampled to RENDER_W x RENDER_H;
+        #                palette-quantized here, then upscaled to self.screen.
+        # Dither and per-pixel effects in atmosphere/lighting/hunger_effects
+        # use PIXEL_SCALE-sized blocks so they survive the downsample as
+        # single pixels (genuine NES per-pixel cadence).
+        self.world_buf = pygame.Surface((WIDTH, HEIGHT)).convert()
+        self.low_res = pygame.Surface((RENDER_W, RENDER_H)).convert()
         self.clock = pygame.time.Clock()
         self.running = True
 
@@ -175,8 +185,10 @@ class Game:
         self.entry_text = None
         self.entry_text_timer = 0.0
 
-        # font for fx whispers
-        self.fx_font = pygame.font.SysFont("consolas", 18, italic=True)
+        # font for fx whispers. Sized 4x its visual target so it downsamples
+        # to NES-readable ~8px text. Italic survives the chunky-pixel pass
+        # as a slight forward slant.
+        self.fx_font = pygame.font.SysFont("consolas", 36, italic=True)
 
     # ---------- menu ----------
     def _menu_options(self):
@@ -504,7 +516,9 @@ class Game:
 
     # ============================================================ DRAW
     def draw(self):
-        screen = self.screen
+        # All UI/world drawing targets the hi-res buffer. The buffer is
+        # downsampled, palette-snapped, and upscaled at the end of the frame.
+        screen = self.world_buf
         if self.state == STATE_MENU:
             self.ui.draw_menu(screen, self.menu_options, self.menu_index)
         elif self.state == STATE_INTRO:
@@ -535,82 +549,89 @@ class Game:
         if self.notification:
             self.ui.draw_notification(screen, self.notification)
 
+        # NES post-process: pixelate by downsampling to RENDER_W x RENDER_H,
+        # snap colors to NES_PALETTE, then upscale to the display window.
+        pygame.transform.scale(self.world_buf, (RENDER_W, RENDER_H), self.low_res)
+        nes_post.quantize(self.low_res)
+        pygame.transform.scale(self.low_res, (WIDTH, HEIGHT), self.screen)
         pygame.display.flip()
 
     def _draw_world(self):
         z = self.zone
+        buf = self.world_buf
         # ground
-        self.screen.fill(z.ground_color, rect=(0, 0, WIDTH, HEIGHT - 100))
+        buf.fill(z.ground_color, rect=(0, 0, WIDTH, HEIGHT - 100))
         # Drifting particles (snow / ash / dust) sit just above the ground.
-        self.atmosphere.draw_particles(self.screen)
+        self.atmosphere.draw_particles(buf)
         # decorations
         for d in z.decorations:
-            d.draw(self.screen, (0, 0))
+            d.draw(buf, (0, 0))
         # NPCs
         for n in z.npcs:
-            n.draw(self.screen, (0, 0))
+            n.draw(buf, (0, 0))
         # Enemies
         for e in z.enemies:
-            e.draw(self.screen, (0, 0))
+            e.draw(buf, (0, 0))
         # Exits — small arrows / labels
         self._draw_exit_markers()
         # Player
-        self.player.draw(self.screen, (0, 0))
+        self.player.draw(buf, (0, 0))
         # foreground (e.g. sinkhole rim)
         for f in z.foreground:
-            f.draw(self.screen, (0, 0))
+            f.draw(buf, (0, 0))
         # Fog mist — drifts in front of the world.
-        self.atmosphere.draw_fog(self.screen)
+        self.atmosphere.draw_fog(buf)
         # Lamp pools — additive warm light. Per-lamp flicker still applies.
         # (The player-centered darkness radius was intentionally removed;
         # Lighting.draw is still available on the class for future use.)
-        self.lighting.draw_lamps(self.screen, z.lamps, self.fx.time)
+        self.lighting.draw_lamps(buf, z.lamps, self.fx.time)
         # Diegetic carved indicators on the left/right edges of the play area.
-        self.ui.draw_diegetic_edges(self.screen, self.player, self._last_dt)
+        self.ui.draw_diegetic_edges(buf, self.player, self._last_dt)
         # Hunger effects on top — vignette, aberration, heartbeat, whispers.
-        self.fx.draw_overlay(self.screen, self.player.hunger, self.fx_font)
+        self.fx.draw_overlay(buf, self.player.hunger, self.fx_font)
 
     def _draw_exit_markers(self):
         font = self.ui.font_sm
+        buf = self.world_buf
         for ex in self.zone.exits:
             r = ex.rect
             locked = ex.is_locked(self.zones)
             tile_col = (28, 28, 32) if locked else (60, 60, 70)
             text_col = (70, 64, 64) if locked else TEXT_DIM
             # darker tile to indicate exit
-            pygame.draw.rect(self.screen, tile_col, r)
-            pygame.draw.rect(self.screen, BLACK, r, 1)
-            label = font.render(ex.label, True, text_col)
+            pygame.draw.rect(buf, tile_col, r)
+            pygame.draw.rect(buf, BLACK, r, 1)
+            label = font.render(ex.label, False, text_col)
             # position label nearby
             if r.x < 32:  # left edge
-                self.screen.blit(label, (r.right + 8, r.centery - label.get_height() // 2))
+                buf.blit(label, (r.right + 8, r.centery - label.get_height() // 2))
             elif r.right > WIDTH - 32:  # right edge
-                self.screen.blit(label, (r.left - label.get_width() - 8, r.centery - label.get_height() // 2))
+                buf.blit(label, (r.left - label.get_width() - 8, r.centery - label.get_height() // 2))
             elif r.y < 32:
-                self.screen.blit(label, (r.centerx - label.get_width() // 2, r.bottom + 4))
+                buf.blit(label, (r.centerx - label.get_width() // 2, r.bottom + 4))
             else:
-                self.screen.blit(label, (r.centerx - label.get_width() // 2, r.top - label.get_height() - 4))
+                buf.blit(label, (r.centerx - label.get_width() // 2, r.top - label.get_height() - 4))
 
     def _draw_interact_prompt(self):
         # show prompt if near an interactable
         for ex in self.zone.exits:
             if self.player.rect.colliderect(ex.rect.inflate(20, 20)):
                 if ex.is_locked(self.zones):
-                    self.ui.draw_interact_prompt(self.screen, "(locked)")
+                    self.ui.draw_interact_prompt(self.world_buf, "(locked)")
                 else:
-                    self.ui.draw_interact_prompt(self.screen, ex.label.strip("<>v^ "))
+                    self.ui.draw_interact_prompt(self.world_buf, ex.label.strip("<>v^ "))
                 return
         for npc in self.zone.npcs:
             if npc.gone:
                 continue
             if self.player.rect.colliderect(npc.interact_rect()):
-                self.ui.draw_interact_prompt(self.screen, f"Talk to {npc.label}")
+                self.ui.draw_interact_prompt(self.world_buf, f"Talk to {npc.label}")
                 return
         for en in self.zone.enemies:
             if en.gone:
                 continue
             if self.player.rect.colliderect(en.interact_rect()):
-                self.ui.draw_interact_prompt(self.screen, f"Engage {en.label}")
+                self.ui.draw_interact_prompt(self.world_buf, f"Engage {en.label}")
                 return
 
     # ============================================================ MAIN LOOP

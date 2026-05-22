@@ -9,7 +9,7 @@ from settings import *
 
 def draw_text(surf, font, text, x, y, color=TEXT, max_w=None, line_spacing=2):
     if max_w is None:
-        s = font.render(text, True, color)
+        s = font.render(text, False, color)
         surf.blit(s, (x, y))
         return s.get_height()
     # word-wrap
@@ -22,11 +22,11 @@ def draw_text(surf, font, text, x, y, color=TEXT, max_w=None, line_spacing=2):
         if font.size(test)[0] <= max_w:
             line = test
         else:
-            surf.blit(font.render(line, True, color), (x, y + h))
+            surf.blit(font.render(line, False, color), (x, y + h))
             h += line_h
             line = w
     if line:
-        surf.blit(font.render(line, True, color), (x, y + h))
+        surf.blit(font.render(line, False, color), (x, y + h))
         h += line_h
     return h
 
@@ -39,11 +39,16 @@ def wrap_with_newlines(text):
 
 class UI:
     def __init__(self):
-        self.font = pygame.font.SysFont("consolas", 16)
-        self.font_sm = pygame.font.SysFont("consolas", 14)
-        self.font_md = pygame.font.SysFont("consolas", 20)
-        self.font_big = pygame.font.SysFont("consolas", 32, bold=True)
-        self.font_title = pygame.font.SysFont("consolas", 56, bold=True)
+        # Font sizes are deliberately ~4x larger than the visual target.
+        # The whole world_buf is downsampled to 320x240 before display, so
+        # a 32pt render at world resolution becomes ~8px at low-res — the
+        # NES native text size. AA is disabled everywhere so the result is
+        # hard-pixel after the downsample.
+        self.font = pygame.font.SysFont("consolas", 32)
+        self.font_sm = pygame.font.SysFont("consolas", 28)
+        self.font_md = pygame.font.SysFont("consolas", 40)
+        self.font_big = pygame.font.SysFont("consolas", 64, bold=True)
+        self.font_title = pygame.font.SysFont("consolas", 96, bold=True)
         # Diegetic indicator state — drifts the marks slightly per second.
         self._diegetic_t = 0.0
 
@@ -132,7 +137,7 @@ class UI:
         col = (140 + min(80, p.hunger), 30, 30)
         pygame.draw.rect(surf, col, (bar_x, bar_y, fill, bar_h))
         pygame.draw.rect(surf, BLACK, (bar_x, bar_y, bar_w, bar_h), 1)
-        surf.blit(self.font_sm.render(f"HUNGER {p.hunger}/100", True, TEXT), (bar_x + 6, bar_y + 3))
+        surf.blit(self.font_sm.render(f"HUNGER {p.hunger}/100", False, TEXT), (bar_x + 6, bar_y + 3))
 
         # HP bar
         hp_y = bar_y + 30
@@ -140,7 +145,7 @@ class UI:
         hp_fill = int(bar_w * (p.hp / p.max_hp))
         pygame.draw.rect(surf, HP_BAR, (bar_x, hp_y, hp_fill, bar_h))
         pygame.draw.rect(surf, BLACK, (bar_x, hp_y, bar_w, bar_h), 1)
-        surf.blit(self.font_sm.render(f"HP {p.hp}/{p.max_hp}", True, TEXT), (bar_x + 6, hp_y + 3))
+        surf.blit(self.font_sm.render(f"HP {p.hp}/{p.max_hp}", False, TEXT), (bar_x + 6, hp_y + 3))
 
         # Corruption bar
         co_y = hp_y + 24
@@ -148,29 +153,29 @@ class UI:
         pygame.draw.rect(surf, (24, 14, 30), (bar_x, co_y, co_w, 8))
         co_fill = int(co_w * (p.corruption / 100))
         pygame.draw.rect(surf, CORRUPT_BAR, (bar_x, co_y, co_fill, 8))
-        surf.blit(self.font_sm.render(f"corruption {p.corruption}", True, TEXT_DIM), (bar_x + co_w + 8, co_y - 4))
+        surf.blit(self.font_sm.render(f"corruption {p.corruption}", False, TEXT_DIM), (bar_x + co_w + 8, co_y - 4))
 
         # Inventory glance
         inv_x = 460
-        surf.blit(self.font_sm.render("ITEMS", True, TEXT_DIM), (inv_x, bar_y - 2))
+        surf.blit(self.font_sm.render("ITEMS", False, TEXT_DIM), (inv_x, bar_y - 2))
         ix = inv_x
         iy = bar_y + 14
         for name, count in p.inventory.items():
             line = f"{name} x{count}"
-            surf.blit(self.font_sm.render(line, True, TEXT), (ix, iy))
+            surf.blit(self.font_sm.render(line, False, TEXT), (ix, iy))
             iy += 16
         # key items
         if p.key_items:
             kx = 640
-            surf.blit(self.font_sm.render("KEY", True, TEXT_DIM), (kx, bar_y - 2))
+            surf.blit(self.font_sm.render("KEY", False, TEXT_DIM), (kx, bar_y - 2))
             ky = bar_y + 14
             for k in sorted(p.key_items):
-                surf.blit(self.font_sm.render(k, True, TEXT_WARN), (kx, ky))
+                surf.blit(self.font_sm.render(k, False, TEXT_WARN), (kx, ky))
                 ky += 16
 
         # Zone label + controls
         right_x = WIDTH - 280
-        surf.blit(self.font_md.render(game.zone.name.upper(), True, TEXT), (right_x, bar_y - 4))
+        surf.blit(self.font_md.render(game.zone.name.upper(), False, TEXT), (right_x, bar_y - 4))
         ctrl_lines = [
             "WASD move    E interact",
             "I inventory  ESC menu",
@@ -178,13 +183,13 @@ class UI:
         ]
         cy = bar_y + 22
         for ln in ctrl_lines:
-            surf.blit(self.font_sm.render(ln, True, TEXT_DIM), (right_x, cy))
+            surf.blit(self.font_sm.render(ln, False, TEXT_DIM), (right_x, cy))
             cy += 16
 
     # ---------------------------------------------------------------- INTERACT PROMPT
     def draw_interact_prompt(self, surf, label):
         text = f"E — {label}"
-        s = self.font.render(text, True, TEXT)
+        s = self.font.render(text, False, TEXT)
         pad = 8
         box = pygame.Rect(0, 0, s.get_width() + pad * 2, s.get_height() + pad)
         box.midbottom = (WIDTH // 2, HEIGHT - 110)
@@ -196,7 +201,7 @@ class UI:
 
     # ---------------------------------------------------------------- NOTIFICATION
     def draw_notification(self, surf, text):
-        s = self.font.render(text, True, TEXT_WARN)
+        s = self.font.render(text, False, TEXT_WARN)
         pad = 10
         box = pygame.Rect(0, 0, s.get_width() + pad * 2, s.get_height() + pad)
         box.midtop = (WIDTH // 2, 30)
@@ -223,7 +228,7 @@ class UI:
         pygame.draw.rect(surf, NEAR_BLACK, box, 1)
         y = box.y + pad
         for ln in lines:
-            s = self.font_md.render(ln, True, TEXT)
+            s = self.font_md.render(ln, False, TEXT)
             surf.blit(s, (box.centerx - s.get_width() // 2, y))
             y += line_h
 
@@ -247,9 +252,9 @@ class UI:
         ty = box.y + 14
         if speaker:
             if speaker == "NARRATION":
-                s = self.font_sm.render("— narration —", True, TEXT_DIM)
+                s = self.font_sm.render("— narration —", False, TEXT_DIM)
             else:
-                s = self.font_md.render(speaker.upper(), True, TEXT_WARN)
+                s = self.font_md.render(speaker.upper(), False, TEXT_WARN)
             surf.blit(s, (box.x + 18, ty))
             ty += s.get_height() + 6
 
@@ -259,7 +264,7 @@ class UI:
         for raw_line in text.split("\n"):
             for wrapped in self._wrap(self.font, raw_line, max_w):
                 col = TEXT_DIM if speaker == "NARRATION" else TEXT
-                s = self.font.render(wrapped, True, col)
+                s = self.font.render(wrapped, False, col)
                 surf.blit(s, (box.x + 18, ty))
                 ty += line_h
 
@@ -270,12 +275,12 @@ class UI:
             for i, (label, _next, _eff) in enumerate(choices):
                 prefix = ">" if i == dialogue.choice_index else " "
                 col = TEXT if i == dialogue.choice_index else TEXT_DIM
-                s = self.font.render(f"{prefix} {i+1}. {label}", True, col)
+                s = self.font.render(f"{prefix} {i+1}. {label}", False, col)
                 surf.blit(s, (box.x + 28, ty))
                 ty += line_h
         else:
             prompt = "Press E to continue" if node.get("next") else "Press E to close"
-            s = self.font_sm.render(prompt, True, TEXT_DIM)
+            s = self.font_sm.render(prompt, False, TEXT_DIM)
             surf.blit(s, (box.right - s.get_width() - 18, box.bottom - s.get_height() - 10))
 
     # ---------------------------------------------------------------- COMBAT
@@ -293,7 +298,7 @@ class UI:
         pygame.draw.rect(surf, col, (ex, ey, 80, 120))
         pygame.draw.rect(surf, BLACK, (ex, ey, 80, 120), 1)
         # name + hp
-        s = self.font_big.render(combat.name, True, TEXT)
+        s = self.font_big.render(combat.name, False, TEXT)
         surf.blit(s, (WIDTH // 2 - s.get_width() // 2, ey - 50))
         # hp bar
         hp_w = 240
@@ -306,31 +311,31 @@ class UI:
         log_x = 60
         log_y = 380
         for i, line in enumerate(combat.log[-5:]):
-            s = self.font.render(line, True, TEXT)
+            s = self.font.render(line, False, TEXT)
             surf.blit(s, (log_x, log_y + i * 22))
 
         # menu
         if not combat.over:
             menu_x = WIDTH - 280
             menu_y = 380
-            s = self.font_md.render("ACTIONS", True, TEXT_DIM)
+            s = self.font_md.render("ACTIONS", False, TEXT_DIM)
             surf.blit(s, (menu_x, menu_y - 28))
             for i, c in enumerate(combat.choices):
                 prefix = ">" if i == combat.menu_index else " "
                 col = TEXT if i == combat.menu_index else TEXT_DIM
-                s = self.font_md.render(f"{prefix} {c}", True, col)
+                s = self.font_md.render(f"{prefix} {c}", False, col)
                 surf.blit(s, (menu_x, menu_y + i * 28))
         else:
-            s = self.font_md.render("...", True, TEXT_DIM)
+            s = self.font_md.render("...", False, TEXT_DIM)
             surf.blit(s, (WIDTH - 200, 380))
 
     # ---------------------------------------------------------------- MENU
     def draw_menu(self, surf, options, index, title="TWISTED AMERICA: HUNGER", subtitle="A horror RPG of the dying town."):
         surf.fill(BLACK)
         # title
-        t = self.font_title.render(title, True, TEXT)
+        t = self.font_title.render(title, False, TEXT)
         surf.blit(t, (WIDTH // 2 - t.get_width() // 2, 140))
-        sub = self.font_md.render(subtitle, True, TEXT_DIM)
+        sub = self.font_md.render(subtitle, False, TEXT_DIM)
         surf.blit(sub, (WIDTH // 2 - sub.get_width() // 2, 210))
         # blood smear
         pygame.draw.rect(surf, BLOOD_RED, (WIDTH // 2 - 200, 250, 400, 2))
@@ -339,12 +344,12 @@ class UI:
         for i, opt in enumerate(options):
             prefix = ">  " if i == index else "   "
             col = TEXT if i == index else TEXT_DIM
-            s = self.font_md.render(prefix + opt, True, col)
+            s = self.font_md.render(prefix + opt, False, col)
             surf.blit(s, (WIDTH // 2 - 200, y))
             y += 44
 
         # content warning
-        warn = self.font_sm.render("Content warning: addiction, body horror, violence.", True, TEXT_DIM)
+        warn = self.font_sm.render("Content warning: addiction, body horror, violence.", False, TEXT_DIM)
         surf.blit(warn, (WIDTH // 2 - warn.get_width() // 2, HEIGHT - 60))
 
     # ---------------------------------------------------------------- INVENTORY
@@ -352,39 +357,39 @@ class UI:
         bg = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         bg.fill((6, 6, 10, 220))
         surf.blit(bg, (0, 0))
-        s = self.font_big.render("MAYA — FIELD KIT", True, TEXT)
+        s = self.font_big.render("MAYA — FIELD KIT", False, TEXT)
         surf.blit(s, (80, 60))
 
         y = 130
-        surf.blit(self.font_md.render("Consumables", True, TEXT_WARN), (80, y))
+        surf.blit(self.font_md.render("Consumables", False, TEXT_WARN), (80, y))
         y += 32
         for name, count in player.inventory.items():
             line = f"{name:<14} x{count}"
-            surf.blit(self.font.render(line, True, TEXT), (100, y))
+            surf.blit(self.font.render(line, False, TEXT), (100, y))
             y += 22
 
         y += 20
-        surf.blit(self.font_md.render("Key items", True, TEXT_WARN), (80, y))
+        surf.blit(self.font_md.render("Key items", False, TEXT_WARN), (80, y))
         y += 32
         if player.key_items:
             for k in sorted(player.key_items):
-                surf.blit(self.font.render(k, True, TEXT), (100, y))
+                surf.blit(self.font.render(k, False, TEXT), (100, y))
                 y += 22
         else:
-            surf.blit(self.font.render("— none —", True, TEXT_DIM), (100, y))
+            surf.blit(self.font.render("— none —", False, TEXT_DIM), (100, y))
             y += 22
 
         # notebook hints
         y += 30
-        surf.blit(self.font_md.render("Notebook", True, TEXT_WARN), (80, y))
+        surf.blit(self.font_md.render("Notebook", False, TEXT_WARN), (80, y))
         y += 32
         notes = self._notebook_lines(player)
         for n in notes:
             for ln in self._wrap(self.font_sm, "- " + n, WIDTH - 200):
-                surf.blit(self.font_sm.render(ln, True, TEXT_DIM), (100, y))
+                surf.blit(self.font_sm.render(ln, False, TEXT_DIM), (100, y))
                 y += 18
 
-        prompt = self.font_sm.render("I or ESC — close", True, TEXT_DIM)
+        prompt = self.font_sm.render("I or ESC — close", False, TEXT_DIM)
         surf.blit(prompt, (WIDTH - prompt.get_width() - 60, HEIGHT - 60))
 
     def _notebook_lines(self, p):
@@ -454,28 +459,28 @@ class UI:
         title, col = title_map.get(ending, ("END", TEXT))
         body = body_map.get(ending, [""])
 
-        t = self.font_title.render(title, True, col)
+        t = self.font_title.render(title, False, col)
         surf.blit(t, (WIDTH // 2 - t.get_width() // 2, 120))
         pygame.draw.rect(surf, col, (WIDTH // 2 - 220, 200, 440, 2))
 
         y = 260
         for line in body:
-            s = self.font_md.render(line, True, TEXT)
+            s = self.font_md.render(line, False, TEXT)
             surf.blit(s, (WIDTH // 2 - s.get_width() // 2, y))
             y += 36
-        prompt = self.font_sm.render("Press ENTER to return to menu.", True, TEXT_DIM)
+        prompt = self.font_sm.render("Press ENTER to return to menu.", False, TEXT_DIM)
         surf.blit(prompt, (WIDTH // 2 - prompt.get_width() // 2, HEIGHT - 80))
 
     # ---------------------------------------------------------------- GAME OVER
     def draw_game_over(self, surf, message):
         surf.fill(BLACK)
-        t = self.font_title.render("YOU DIED", True, TEXT_BLOOD)
+        t = self.font_title.render("YOU DIED", False, TEXT_BLOOD)
         surf.blit(t, (WIDTH // 2 - t.get_width() // 2, 160))
         pygame.draw.rect(surf, BLOOD_RED, (WIDTH // 2 - 200, 240, 400, 2))
         for i, ln in enumerate(message.split("\n")):
-            s = self.font_md.render(ln, True, TEXT)
+            s = self.font_md.render(ln, False, TEXT)
             surf.blit(s, (WIDTH // 2 - s.get_width() // 2, 300 + i * 36))
-        prompt = self.font_sm.render("ENTER — return to menu      F9 — load save", True, TEXT_DIM)
+        prompt = self.font_sm.render("ENTER — return to menu      F9 — load save", False, TEXT_DIM)
         surf.blit(prompt, (WIDTH // 2 - prompt.get_width() // 2, HEIGHT - 80))
 
     # ---------------------------------------------------------------- INTRO
@@ -485,10 +490,10 @@ class UI:
         y = 200
         for i, ln in enumerate(lines[: line_index + 1]):
             col = TEXT if i == line_index else TEXT_DIM
-            s = self.font_md.render(ln, True, col)
+            s = self.font_md.render(ln, False, col)
             surf.blit(s, (WIDTH // 2 - s.get_width() // 2, y))
             y += 38
-        prompt = self.font_sm.render("SPACE — next      ESC — skip", True, TEXT_DIM)
+        prompt = self.font_sm.render("SPACE — next      ESC — skip", False, TEXT_DIM)
         surf.blit(prompt, (WIDTH // 2 - prompt.get_width() // 2, HEIGHT - 60))
 
     # ---------------------------------------------------------------- helpers

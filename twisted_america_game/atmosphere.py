@@ -13,19 +13,22 @@ play surface. Cheaper than the previous static `set_at` snow loop.
 import math
 import random
 import pygame
-from settings import WIDTH, HEIGHT
+from settings import WIDTH, HEIGHT, PIXEL_SCALE
+from nes_post import BAYER_4
 
 
 PLAY_H = HEIGHT - 100
 
 
 # Per-kind visual + motion presets.
+# `size` is in world pixels and is snapped up to PIXEL_SCALE so particles
+# survive the downsample to 320x240 as solid 1-pixel specks.
 _PRESETS = {
     "snow": {
         "color": (175, 180, 188),
         "vx_range": (-8, 8),
         "vy_range": (10, 26),
-        "size": 2,
+        "size": PIXEL_SCALE,
         "count": 90,
         "wobble": 0.4,
     },
@@ -33,7 +36,7 @@ _PRESETS = {
         "color": (90, 86, 82),
         "vx_range": (-14, 6),
         "vy_range": (14, 30),
-        "size": 2,
+        "size": PIXEL_SCALE,
         "count": 80,
         "wobble": 0.9,
     },
@@ -41,7 +44,7 @@ _PRESETS = {
         "color": (110, 100, 92),
         "vx_range": (-4, 4),
         "vy_range": (-3, 8),
-        "size": 1,
+        "size": PIXEL_SCALE,
         "count": 60,
         "wobble": 1.4,
     },
@@ -49,14 +52,34 @@ _PRESETS = {
 
 
 def _build_fog_blob(radius=180):
+    """Bayer-dithered radial fog blob — densest near center, scattered at edge.
+
+    NES PPUs couldn't alpha-blend; horror games (Sweet Home, Uninvited)
+    faked translucent fog with ordered dither. Each lit cell here is a
+    PIXEL_SCALE-sized block so it survives the downsample as one pixel.
+    """
+    ps = PIXEL_SCALE
+    # Round radius to PIXEL_SCALE so the blob aligns with the dither grid.
+    radius = (radius // ps) * ps
     size = radius * 2
     s = pygame.Surface((size, size), pygame.SRCALPHA)
-    cx = cy = radius
-    for i in range(radius, 0, -3):
-        a = max(0, int(22 * (i / radius) ** 1.6))
-        if a <= 0:
-            continue
-        pygame.draw.circle(s, (180, 182, 188, a), (cx, cy), i)
+    color = (180, 182, 188, 255)
+    cells = size // ps
+    cx_world = cy_world = radius
+    for cy in range(cells):
+        py = cy * ps
+        my = cy & 3
+        dy = py + ps // 2 - cy_world
+        for cx in range(cells):
+            px = cx * ps
+            dx = px + ps // 2 - cx_world
+            dist = math.hypot(dx, dy)
+            if dist >= radius:
+                continue
+            # density: ~32% at the center, falling off as a soft curve.
+            density = (1.0 - dist / radius) ** 1.6 * 0.32
+            if BAYER_4[my][cx & 3] < density:
+                pygame.draw.rect(s, color, (px, py, ps, ps))
     return s
 
 
@@ -133,8 +156,14 @@ class Atmosphere:
         preset = _PRESETS[self._kind]
         color = preset["color"]
         size = preset["size"]
+        ps = PIXEL_SCALE
+        # Snap each particle to the pixel grid so it survives the downsample
+        # as a solid block. Drifting still updates floating-point position;
+        # only the rendered rectangle is grid-aligned.
         for p in self._particles:
-            pygame.draw.rect(surf, color, (int(p[0]), int(p[1]), size, size))
+            x = int(p[0]) // ps * ps
+            y = int(p[1]) // ps * ps
+            pygame.draw.rect(surf, color, (x, y, size, size))
 
     def draw_fog(self, surf):
         if not self._fog_blobs:
