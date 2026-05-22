@@ -10,6 +10,7 @@ import pygame
 import random
 from settings import *
 from npc import NPC, Enemy
+import assets
 
 
 PLAY_W = WIDTH
@@ -27,6 +28,13 @@ class Decoration:
 
     def draw(self, surf, cam=(0, 0)):
         r = self.rect.move(-cam[0], -cam[1])
+        # Prefer a painted PNG when present. Stretches to fit the decoration rect.
+        sp = assets.sprite("deco_" + self.kind)
+        if sp is not None:
+            if sp.get_size() != (r.w, r.h):
+                sp = pygame.transform.smoothscale(sp, (r.w, r.h))
+            surf.blit(sp, (r.x, r.y))
+            return
         if self.kind == "tree":
             pygame.draw.rect(surf, WOOD_DARK, (r.x + r.w // 2 - 2, r.y + r.h - 12, 4, 12))
             pygame.draw.polygon(
@@ -111,6 +119,9 @@ class Zone:
         self.exits = []
         self.entry_narration = ""  # shown once on entry
         self.visited = False
+        # Lighting: None disables the darkness layer (e.g. open outdoor zones
+        # in daylight). A positive int is the nominal light radius in pixels.
+        self.darkness_radius = None
         # subtle ambient stuff
         self.snow_specks = [(random.randint(0, PLAY_W), random.randint(0, PLAY_H), random.uniform(8, 30), random.uniform(0.2, 0.8))
                             for _ in range(80)]
@@ -148,6 +159,7 @@ def build_zones():
     # =========================================================== MAIN STREET
     z = Zone("main_street", "Main Street", SNOW_DEEP)
     z.entry_narration = "Main Street. Beckley, West Virginia. The shops are dark. Nobody clears the snow."
+    z.darkness_radius = 380
     # road down the middle
     z.decorations.append(Decoration((0, PLAY_H // 2 - 60, PLAY_W, 120), ASPHALT, "rect"))
     for cx in range(40, PLAY_W, 80):
@@ -186,6 +198,7 @@ def build_zones():
     # =========================================================== HOLLOWS
     z = Zone("hollows", "The Hollows", SNOW_DEEP)
     z.entry_narration = "The Hollows. Houses leaning into each other for warmth. Henderson's porch light is on."
+    z.darkness_radius = 360
     z.decorations.append(Decoration((0, PLAY_H // 2 - 40, PLAY_W, 80), ASPHALT, "rect"))
     # row of houses
     z.add_house(100, 90, 110, 80)
@@ -218,6 +231,7 @@ def build_zones():
     # =========================================================== TRAILER PARK
     z = Zone("trailer_park", "The Trailer Park", DEAD_GRASS)
     z.entry_narration = "The trailer park. Dogs that don't bark. A blue door at the north end."
+    z.darkness_radius = 340
     z.decorations.append(Decoration((0, PLAY_H // 2 - 30, PLAY_W, 60), ASPHALT_CRK, "rect"))
     # row of trailers
     z.add_trailer(120, 110)
@@ -253,6 +267,7 @@ def build_zones():
     # =========================================================== HOSPITAL
     z = Zone("hospital", "Beckley General", DARK_GRAY)
     z.entry_narration = "The hospital lights buzz. Half are out. Jared is in 204."
+    z.darkness_radius = 280
     # tile floor checker
     for tx in range(0, PLAY_W, 64):
         for ty in range(0, PLAY_H, 64):
@@ -285,6 +300,7 @@ def build_zones():
     # =========================================================== WOODS
     z = Zone("woods", "The Woods", (22, 28, 24))
     z.entry_narration = "The woods. Trees standing closer than they should. The sinkhole is south."
+    z.darkness_radius = 240
     # scatter of trees forming corridors
     random.seed(7)
     for _ in range(80):

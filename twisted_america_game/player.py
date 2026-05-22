@@ -1,7 +1,10 @@
 """Maya Chen — protagonist."""
 
+import math
+import random
 import pygame
 from settings import *
+import assets
 
 
 class Player:
@@ -44,6 +47,14 @@ class Player:
         self._hunger_clock = 0.0
         self._hunger_period = 7.0  # seconds per +1 hunger
 
+        # idle animation state
+        self._idle_t = 0.0
+        self._jitter = (0, 0)
+        self._jitter_clock = 0.0
+        self._frame_clock = 0.0
+        self._frame_idx = 0
+        self._is_moving = False
+
     # ---- stat helpers ----
     def add_hunger(self, n):
         self.hunger = max(0, min(self.max_hunger, self.hunger + n))
@@ -71,11 +82,13 @@ class Player:
             dx += 1
 
         if dx or dy:
-            # normalize
             if dx and dy:
                 dx *= 0.7071
                 dy *= 0.7071
             self.facing = (dx, dy)
+            self._is_moving = True
+        else:
+            self._is_moving = False
 
         move_x = dx * self.speed * dt
         move_y = dy * self.speed * dt
@@ -101,22 +114,66 @@ class Player:
             self._hunger_clock -= self._hunger_period
             self.add_hunger(1)
 
+        # idle jitter & frame animation
+        self._idle_t += dt
+        self._jitter_clock -= dt
+        if self._jitter_clock <= 0:
+            # idle is twitchier than walking — twitch a bit either way
+            self._jitter_clock = random.uniform(0.18, 0.42)
+            mag = 1 if self._is_moving else 1
+            self._jitter = (random.randint(-mag, mag), random.randint(-mag, mag))
+        self._frame_clock += dt
+        frame_period = 0.14 if self._is_moving else 0.22
+        if self._frame_clock >= frame_period:
+            self._frame_clock = 0.0
+            self._frame_idx += 1
+
     def draw(self, surf, cam=(0, 0)):
-        x = self.rect.x - cam[0]
-        y = self.rect.y - cam[1]
-        # coat
-        coat = COAT_BROWN
-        if self.hunger >= 76:
-            coat = (40, 20, 22)  # darkening
-        pygame.draw.rect(surf, coat, (x, y + 9, 22, 21))
+        jx, jy = self._jitter
+        x = self.rect.x - cam[0] + jx
+        y = self.rect.y - cam[1] + jy
+
+        sp = assets.sprite("maya", self._frame_idx)
+        if sp is not None:
+            sw, sh = sp.get_size()
+            blit_x = x + (self.rect.w - sw) // 2
+            blit_y = y + self.rect.h - sh  # foot-aligned
+            surf.blit(sp, (blit_x, blit_y))
+            return
+
+        self._draw_silhouette(surf, x, y)
+
+    def _draw_silhouette(self, surf, x, y):
+        w, h = self.rect.w, self.rect.h
+        bottom = y + h
+        # subtle ground shadow
+        shadow = pygame.Rect(x - 2, bottom - 3, w + 4, 5)
+        pygame.draw.ellipse(surf, (0, 0, 0), shadow)
+
+        sway = math.sin(self._idle_t * 1.4) * 0.6
+        coat = COAT_BROWN if self.hunger < 76 else (40, 20, 22)
+        head_col = SKIN if self.hunger < 76 else (130, 100, 96)
+
+        # legs
+        pygame.draw.rect(surf, (24, 18, 14), (x + 6, bottom - 12, 4, 12))
+        pygame.draw.rect(surf, (24, 18, 14), (x + w - 10, bottom - 12, 4, 12))
+        # coat — flared at base, narrower at shoulders (gaunt)
+        pygame.draw.polygon(surf, coat, [
+            (x + 5, bottom - 22),
+            (x + w - 5, bottom - 22),
+            (x + w - 1, bottom - 4),
+            (x + 1, bottom - 4),
+        ])
         # collar
-        pygame.draw.rect(surf, (40, 26, 18), (x + 4, y + 9, 14, 3))
-        # head
-        head_col = SKIN
-        if self.hunger >= 76:
-            head_col = (130, 100, 96)
-        pygame.draw.rect(surf, head_col, (x + 6, y + 1, 10, 9))
-        # hair
-        pygame.draw.rect(surf, (20, 16, 14), (x + 6, y, 10, 3))
-        # outline
-        pygame.draw.rect(surf, BLACK, (x, y, 22, 30), 1)
+        pygame.draw.rect(surf, (24, 16, 12), (x + 6, bottom - 22, w - 12, 2))
+        # neck (elongates above the rect)
+        nx = int(x + w // 2 - 2 + sway)
+        pygame.draw.rect(surf, head_col, (nx, bottom - 28, 4, 6))
+        # head — sits above rect top (elongation)
+        head_w, head_h = 8, 9
+        hx = int(x + w // 2 - head_w // 2 + sway)
+        pygame.draw.rect(surf, head_col, (hx, bottom - 38, head_w, head_h))
+        # hair / hood
+        pygame.draw.rect(surf, (16, 12, 10), (hx, bottom - 38, head_w, 3))
+        # darken eyes — just a horizontal shadow band
+        pygame.draw.rect(surf, (28, 22, 22), (hx + 1, bottom - 34, head_w - 2, 1))

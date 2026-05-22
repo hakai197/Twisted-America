@@ -24,6 +24,8 @@ from ui import UI
 from combat import Combat, ENCOUNTERS
 from hunger_effects import HungerFx
 from save_system import save_game, load_game, has_save
+from lighting import Lighting
+import assets
 import dialogue_data
 
 
@@ -137,8 +139,15 @@ class Game:
         self.clock = pygame.time.Clock()
         self.running = True
 
+        # Load any PNGs the user has placed in assets/. Safe if the dir is
+        # empty or partly populated — every draw site has a procedural
+        # fallback, so the game runs at every stage of asset production.
+        asset_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+        assets.init(asset_dir)
+
         self.ui = UI()
         self.fx = HungerFx()
+        self.lighting = Lighting()
 
         self.state = STATE_MENU
         self.menu_index = 0
@@ -530,6 +539,10 @@ class Game:
         # foreground (e.g. sinkhole rim)
         for f in z.foreground:
             f.draw(self.screen, (0, 0))
+        # Darkness radius — drawn before the hunger overlay so vignette,
+        # drips, and whispers still read clearly on top of the lit area.
+        self.lighting.draw(self.screen, self.player.rect,
+                           z.darkness_radius, self.player.hunger)
         # Hunger effects on top
         self.fx.draw_overlay(self.screen, self.player.hunger, self.fx_font)
 
