@@ -99,11 +99,22 @@ class Decoration:
 
 
 class Exit:
-    def __init__(self, rect, target_zone, spawn_xy, label):
+    def __init__(self, rect, target_zone, spawn_xy, label,
+                 requires_visited=None, locked_message=None):
         self.rect = pygame.Rect(rect)
         self.target_zone = target_zone
         self.spawn_xy = spawn_xy
         self.label = label
+        # List of zone keys that must be marked visited before this exit unlocks.
+        self.requires_visited = list(requires_visited or [])
+        self.locked_message = locked_message or "Not yet. There are still names you don't know."
+
+    def is_locked(self, zones):
+        for zk in self.requires_visited:
+            z = zones.get(zk)
+            if z is None or not z.visited:
+                return True
+        return False
 
 
 class Zone:
@@ -122,9 +133,14 @@ class Zone:
         # Lighting: None disables the darkness layer (e.g. open outdoor zones
         # in daylight). A positive int is the nominal light radius in pixels.
         self.darkness_radius = None
-        # subtle ambient stuff
-        self.snow_specks = [(random.randint(0, PLAY_W), random.randint(0, PLAY_H), random.uniform(8, 30), random.uniform(0.2, 0.8))
-                            for _ in range(80)]
+        # Lamps: list of (x, y, radius, (r, g, b)). Drawn additively over
+        # the darkness so they brighten dim areas.
+        self.lamps = []
+        # Atmospheric particles + fog.
+        self.particle_kind = "snow"   # "snow" | "ash" | "dust" | None
+        self.fog_density = 0.0        # 0.0 .. 1.0
+        # (legacy: kept so any persisted save references don't crash; unused)
+        self.snow_specks = []
 
     def add_house(self, x, y, w=64, h=56, color=ROOF):
         self.decorations.append(Decoration((x, y, w, h), color, "house"))
@@ -160,6 +176,11 @@ def build_zones():
     z = Zone("main_street", "Main Street", SNOW_DEEP)
     z.entry_narration = "Main Street. Beckley, West Virginia. The shops are dark. Nobody clears the snow."
     z.darkness_radius = 380
+    z.particle_kind = "snow"
+    z.fog_density = 0.3
+    # Sodium street lamps along the road
+    for lx in (160, 380, 600, 820, 1040):
+        z.lamps.append((lx, PLAY_H // 2 - 80, 70, (180, 140, 70)))
     # road down the middle
     z.decorations.append(Decoration((0, PLAY_H // 2 - 60, PLAY_W, 120), ASPHALT, "rect"))
     for cx in range(40, PLAY_W, 80):
@@ -192,13 +213,34 @@ def build_zones():
     z.npcs.append(NPC("Cory", 700, 230, (80, 64, 60), "cory", label="Cory"))
     z.exits.append(Exit((PLAY_W - 30, PLAY_H // 2 - 30, 30, 60), "hollows", (40, PLAY_H // 2), "The Hollows >"))
     z.exits.append(Exit((0, PLAY_H // 2 - 30, 30, 60), "hospital", (PLAY_W - 60, PLAY_H // 2), "< Hospital"))
-    z.exits.append(Exit((PLAY_W // 2 - 30, PLAY_H - 30, 60, 30), "woods", (PLAY_W // 2, 40), "Woods v"))
+    # Chapel entrance — over the church door at (140, 182, 20, 28)
+    z.exits.append(Exit((140, 182, 20, 28), "chapel",
+                        (PLAY_W // 2 - 11, PLAY_H - 80), "Chapel"))
+    # Sheriff's office — repurpose the diner doorway at (280, 110, 130, 90)
+    z.exits.append(Exit((335, 178, 20, 22), "sheriff",
+                        (PLAY_W // 2, PLAY_H - 80), "Sheriff"))
+    # Highway 19 Motel — north exit off Main Street
+    z.exits.append(Exit((PLAY_W // 2 - 30, 0, 60, 30), "motel",
+                        (PLAY_W // 2, PLAY_H - 80), "Motel ^"))
+    # Woods is gated: Maya must walk the town first.
+    z.exits.append(Exit(
+        (PLAY_W // 2 - 30, PLAY_H - 30, 60, 30), "woods", (PLAY_W // 2, 40), "Woods v",
+        requires_visited=["hollows", "trailer_park", "hospital", "chapel",
+                          "sheriff", "motel", "school", "mine"],
+        locked_message="Not yet. The woods can wait. The town can't.",
+    ))
     zones[z.key] = z
 
     # =========================================================== HOLLOWS
     z = Zone("hollows", "The Hollows", SNOW_DEEP)
     z.entry_narration = "The Hollows. Houses leaning into each other for warmth. Henderson's porch light is on."
     z.darkness_radius = 360
+    z.particle_kind = "snow"
+    z.fog_density = 0.4
+    # Henderson's porch light — single warm lamp, the only working one
+    z.lamps.append((510, 190, 75, (210, 140, 60)))
+    # one cold dim lamp at the far end
+    z.lamps.append((1020, 130, 45, (130, 130, 150)))
     z.decorations.append(Decoration((0, PLAY_H // 2 - 40, PLAY_W, 80), ASPHALT, "rect"))
     # row of houses
     z.add_house(100, 90, 110, 80)
@@ -226,12 +268,21 @@ def build_zones():
 
     z.exits.append(Exit((0, PLAY_H // 2 - 30, 30, 60), "main_street", (PLAY_W - 60, PLAY_H // 2), "< Main St."))
     z.exits.append(Exit((PLAY_W - 30, PLAY_H // 2 - 30, 30, 60), "trailer_park", (40, PLAY_H // 2), "Trailer Park >"))
+    # Schoolhouse — north exit
+    z.exits.append(Exit((PLAY_W // 2 - 30, 0, 60, 30), "school",
+                        (PLAY_W // 2, PLAY_H - 80), "Schoolhouse ^"))
     zones[z.key] = z
 
     # =========================================================== TRAILER PARK
     z = Zone("trailer_park", "The Trailer Park", DEAD_GRASS)
     z.entry_narration = "The trailer park. Dogs that don't bark. A blue door at the north end."
     z.darkness_radius = 340
+    z.particle_kind = "snow"
+    z.fog_density = 0.5
+    # Sickly yellow-green vapor lamps. One is over the blue-door trailer.
+    z.lamps.append((442, 100, 55, (150, 170, 70)))
+    z.lamps.append((200, 280, 50, (140, 150, 80)))
+    z.lamps.append((900, 320, 50, (140, 150, 80)))
     z.decorations.append(Decoration((0, PLAY_H // 2 - 30, PLAY_W, 60), ASPHALT_CRK, "rect"))
     # row of trailers
     z.add_trailer(120, 110)
@@ -262,12 +313,22 @@ def build_zones():
     z.npcs.append(NPC("The Dealer", 432, 152, (60, 70, 90), "dealer", label="Dealer"))
 
     z.exits.append(Exit((0, PLAY_H // 2 - 30, 30, 60), "hollows", (PLAY_W - 60, PLAY_H // 2), "< Hollows"))
+    # Coal Mine — east exit
+    z.exits.append(Exit((PLAY_W - 30, PLAY_H // 2 - 30, 30, 60), "mine",
+                        (40, PLAY_H // 2), "Coal Mine >"))
     zones[z.key] = z
 
     # =========================================================== HOSPITAL
     z = Zone("hospital", "Beckley General", DARK_GRAY)
     z.entry_narration = "The hospital lights buzz. Half are out. Jared is in 204."
     z.darkness_radius = 280
+    z.particle_kind = "dust"
+    z.fog_density = 0.0
+    # Fluorescent ceiling fixtures. Pale, cold. Several are dead — we just
+    # don't place them. The remaining ones flicker (handled per-lamp).
+    for lx, ly in ((220, 130), (640, 130), (1060, 130),
+                   (220, 380), (640, 380), (1060, 380)):
+        z.lamps.append((lx, ly, 50, (170, 180, 200)))
     # tile floor checker
     for tx in range(0, PLAY_W, 64):
         for ty in range(0, PLAY_H, 64):
@@ -297,10 +358,230 @@ def build_zones():
     z.exits.append(Exit((PLAY_W - 30, PLAY_H // 2 - 30, 30, 60), "main_street", (40, PLAY_H // 2), "Main St. >"))
     zones[z.key] = z
 
+    # =========================================================== CHAPEL
+    z = Zone("chapel", "The Chapel", (24, 22, 26))
+    z.entry_narration = "The chapel. Half the candles still burn. The Reverend has not left."
+    z.darkness_radius = 220
+    z.particle_kind = "dust"
+    z.fog_density = 0.08
+
+    # boundary walls
+    z.add_wall(0, 0, PLAY_W, 30, (40, 36, 38))
+    z.add_wall(0, PLAY_H - 30, PLAY_W, 30, (40, 36, 38))
+    z.add_wall(0, 30, 30, PLAY_H - 60, (40, 36, 38))
+    z.add_wall(PLAY_W - 30, 30, 30, PLAY_H - 60, (40, 36, 38))
+
+    # altar at the north
+    altar_x = PLAY_W // 2 - 60
+    altar_y = 80
+    z.decorations.append(Decoration((altar_x, altar_y, 120, 30), (54, 44, 36), "rect", outline=BLACK))
+    z.obstacles.append(pygame.Rect(altar_x, altar_y, 120, 30))
+    # cross above the altar
+    z.decorations.append(Decoration((PLAY_W // 2 - 2, altar_y - 50, 4, 40), BONE, "rect"))
+    z.decorations.append(Decoration((PLAY_W // 2 - 12, altar_y - 36, 24, 4), BONE, "rect"))
+
+    # pews flanking the central aisle (6 rows, two columns)
+    aisle_left = PLAY_W // 2 - 50
+    aisle_right = PLAY_W // 2 + 50
+    for row in range(6):
+        py = 180 + row * 60
+        z.decorations.append(Decoration((aisle_left - 240, py, 220, 22), WOOD, "rect", outline=WOOD_DARK))
+        z.obstacles.append(pygame.Rect(aisle_left - 240, py, 220, 22))
+        z.decorations.append(Decoration((aisle_right + 20, py, 220, 22), WOOD, "rect", outline=WOOD_DARK))
+        z.obstacles.append(pygame.Rect(aisle_right + 20, py, 220, 22))
+
+    # stained-glass panels — the only saturated color in the game
+    for sy, col in ((140, BLOOD_RED), (300, (160, 130, 60)), (460, BLOOD_RED)):
+        z.decorations.append(Decoration((4, sy, 26, 60), col, "rect", outline=BLACK))
+        z.decorations.append(Decoration((PLAY_W - 30, sy, 26, 60), col, "rect", outline=BLACK))
+
+    # The Reverend at the altar
+    z.npcs.append(NPC("The Reverend", PLAY_W // 2 - 11, altar_y + 32,
+                      (40, 28, 48), "reverend", label="Reverend"))
+
+    # candles — two small warm pinpoints at the altar corners
+    z.lamps.append((altar_x + 10, altar_y + 14, 26, (220, 180, 110)))
+    z.lamps.append((altar_x + 110, altar_y + 14, 26, (220, 180, 110)))
+
+    # exit at the south, back to Main Street, just below the church door
+    z.exits.append(Exit((PLAY_W // 2 - 30, PLAY_H - 30, 60, 30), "main_street",
+                        (140, 230), "v Main St."))
+    zones[z.key] = z
+
+    # =========================================================== SHERIFF'S OFFICE
+    z = Zone("sheriff", "Sheriff's Office", (28, 26, 24))
+    z.entry_narration = "Sheriff's office. Boarded glass. The chair behind the desk is overturned."
+    z.particle_kind = "dust"
+    z.fog_density = 0.0
+
+    z.add_wall(0, 0, PLAY_W, 30, (44, 38, 36))
+    z.add_wall(0, PLAY_H - 30, PLAY_W, 30, (44, 38, 36))
+    z.add_wall(0, 30, 30, PLAY_H - 60, (44, 38, 36))
+    z.add_wall(PLAY_W - 30, 30, 30, PLAY_H - 60, (44, 38, 36))
+
+    # overturned desk + chair on the floor
+    z.decorations.append(Decoration((PLAY_W // 2 - 80, 200, 160, 50), (62, 48, 36), "rect", outline=BLACK))
+    z.obstacles.append(pygame.Rect(PLAY_W // 2 - 80, 200, 160, 50))
+    z.decorations.append(Decoration((PLAY_W // 2 + 60, 260, 30, 14), WOOD_DARK, "rect"))
+
+    # file cabinets along the back wall
+    for cx in range(120, PLAY_W - 120, 70):
+        z.decorations.append(Decoration((cx, 50, 44, 70), (60, 60, 64), "rect", outline=BLACK))
+        z.obstacles.append(pygame.Rect(cx, 50, 44, 70))
+
+    # evidence-room door — sealed in red paint, decorative
+    ev_x = PLAY_W - 90
+    z.decorations.append(Decoration((ev_x, 200, 50, 90), (40, 30, 24), "rect", outline=BLACK))
+    z.obstacles.append(pygame.Rect(ev_x, 200, 50, 90))
+    z.decorations.append(Decoration((ev_x + 10, 270, 30, 4), BLOOD_RED, "rect"))
+
+    # Deputy Hollis's office door (west wall)
+    dep_door = pygame.Rect(40, 380, 50, 90)
+    z.decorations.append(Decoration(dep_door, (40, 30, 24), "rect", outline=BLACK))
+    z.obstacles.append(dep_door)
+    # NPC stands just east of the door (the player knocks; Hollis answers through it)
+    z.npcs.append(NPC("Deputy Hollis", 100, 405, (60, 50, 50), "hollis", label="Deputy Hollis (through the door)"))
+
+    # cold desk lamp
+    z.lamps.append((PLAY_W // 2, 220, 50, (160, 170, 180)))
+
+    z.exits.append(Exit((PLAY_W // 2 - 30, PLAY_H - 30, 60, 30), "main_street",
+                        (345, 230), "v Main St."))
+    zones[z.key] = z
+
+    # =========================================================== MOTEL
+    z = Zone("motel", "Highway 19 Motel", (140, 144, 152))
+    z.entry_narration = "Highway 19 Motel. The vacancy sign is on. Most of the doors are open."
+    z.particle_kind = "snow"
+    z.fog_density = 0.4
+
+    z.add_wall(0, 0, PLAY_W, 30, (44, 42, 44))
+    z.add_wall(0, PLAY_H - 30, PLAY_W, 30, (44, 42, 44))
+    z.add_wall(0, 30, 30, PLAY_H - 60, (44, 42, 44))
+    z.add_wall(PLAY_W - 30, 30, 30, PLAY_H - 60, (44, 42, 44))
+
+    # row of 7 motel rooms along the top
+    for room_idx in range(7):
+        rx = 80 + room_idx * 160
+        z.decorations.append(Decoration((rx, 80, 140, 60), (72, 64, 56), "rect", outline=BLACK))
+        z.obstacles.append(pygame.Rect(rx, 80, 140, 60))
+        # door — open (void) for some, shut (wood) for others. Room 7 (index 6) is open.
+        if room_idx in (1, 3, 5, 6):
+            z.decorations.append(Decoration((rx + 60, 120, 20, 20), (8, 8, 10), "rect"))
+        else:
+            z.decorations.append(Decoration((rx + 60, 120, 20, 20), WOOD_DARK, "rect", outline=BLACK))
+        # window + room-number plate
+        z.decorations.append(Decoration((rx + 10, 100, 30, 20), WINDOW, "rect"))
+        z.decorations.append(Decoration((rx + 100, 90, 12, 12), (180, 160, 80), "rect"))
+
+    # vacancy sign with a buzzing yellow lamp
+    z.decorations.append(Decoration((PLAY_W - 150, 200, 100, 60), (60, 50, 40), "rect", outline=BLACK))
+    z.obstacles.append(pygame.Rect(PLAY_W - 150, 200, 100, 60))
+    z.decorations.append(Decoration((PLAY_W - 140, 220, 80, 8), (180, 160, 80), "rect"))
+    z.decorations.append(Decoration((PLAY_W - 140, 240, 80, 8), (180, 160, 80), "rect"))
+    z.lamps.append((PLAY_W - 100, 230, 70, (200, 170, 60)))
+
+    # abandoned car
+    z.decorations.append(Decoration((280, 380, 120, 50), (52, 50, 48), "rect", outline=BLACK))
+    z.obstacles.append(pygame.Rect(280, 380, 120, 50))
+    z.decorations.append(Decoration((290, 388, 20, 14), WINDOW, "rect"))
+    z.decorations.append(Decoration((370, 388, 20, 14), WINDOW, "rect"))
+
+    # The Guest, standing in the open door of Room 7
+    guest_x = 80 + 6 * 160 + 60
+    z.npcs.append(NPC("Hotel Guest", guest_x, 138, (90, 60, 60), "motel_guest", label="The Guest"))
+
+    z.exits.append(Exit((PLAY_W // 2 - 30, PLAY_H - 30, 60, 30), "main_street",
+                        (PLAY_W // 2, 60), "v Main St."))
+    zones[z.key] = z
+
+    # =========================================================== SCHOOLHOUSE
+    z = Zone("school", "The Schoolhouse", (40, 32, 26))
+    z.entry_narration = "Schoolhouse. Empty desks. Chalk on the board: SHE IS COMING. SHE IS COMING."
+    z.particle_kind = "dust"
+    z.fog_density = 0.0
+
+    z.add_wall(0, 0, PLAY_W, 30, (54, 44, 38))
+    z.add_wall(0, PLAY_H - 30, PLAY_W, 30, (54, 44, 38))
+    z.add_wall(0, 30, 30, PLAY_H - 60, (54, 44, 38))
+    z.add_wall(PLAY_W - 30, 30, 30, PLAY_H - 60, (54, 44, 38))
+
+    # chalkboard
+    z.decorations.append(Decoration((PLAY_W // 2 - 180, 50, 360, 80), (24, 28, 28), "rect", outline=BLACK))
+
+    # rows of small desks
+    for row in range(4):
+        for col in range(5):
+            dx = 280 + col * 140
+            dy = 200 + row * 90
+            z.decorations.append(Decoration((dx, dy, 60, 30), WOOD, "rect", outline=WOOD_DARK))
+            z.obstacles.append(pygame.Rect(dx, dy, 60, 30))
+
+    # children's drawings on the side walls (the only saturated color)
+    for sy, col in ((100, BLOOD_RED), (220, (160, 130, 60)), (340, BLOOD_RED), (460, (160, 130, 60))):
+        z.decorations.append(Decoration((40, sy, 30, 30), col, "rect", outline=BLACK))
+        z.decorations.append(Decoration((PLAY_W - 70, sy, 30, 30), col, "rect", outline=BLACK))
+
+    # the janitor with his broom
+    z.npcs.append(NPC("The Janitor", PLAY_W // 2 - 11, 480, (66, 58, 50), "janitor", label="Janitor"))
+
+    # overhead fluorescents
+    z.lamps.append((PLAY_W // 2 - 280, 60, 45, (170, 180, 200)))
+    z.lamps.append((PLAY_W // 2 + 280, 60, 45, (170, 180, 200)))
+
+    z.exits.append(Exit((PLAY_W // 2 - 30, PLAY_H - 30, 60, 30), "hollows",
+                        (PLAY_W // 2, 60), "v Hollows"))
+    zones[z.key] = z
+
+    # =========================================================== COAL MINE
+    z = Zone("mine", "Coal Mine Entrance", (32, 28, 24))
+    z.entry_narration = "Coal mine entrance. The lift cage is gone. Wind comes out of the dark."
+    z.particle_kind = "ash"
+    z.fog_density = 0.5
+
+    z.add_wall(0, 0, PLAY_W, 30, (40, 36, 32))
+    z.add_wall(0, PLAY_H - 30, PLAY_W, 30, (40, 36, 32))
+    z.add_wall(0, 30, 30, PLAY_H - 60, (40, 36, 32))
+    z.add_wall(PLAY_W - 30, 30, 30, PLAY_H - 60, (40, 36, 32))
+
+    # the mine mouth — black void at the north
+    mouth_rect = (PLAY_W // 2 - 180, 60, 360, 140)
+    z.decorations.append(Decoration(mouth_rect, (8, 6, 8), "rect", outline=BLACK))
+    z.obstacles.append(pygame.Rect(mouth_rect))
+    z.decorations.append(Decoration((PLAY_W // 2 - 140, 90, 280, 80), (4, 4, 6), "rect"))
+
+    # rusted mine cart + tracks
+    z.decorations.append(Decoration((280, 360, 100, 50), (66, 38, 28), "rect", outline=BLACK))
+    z.obstacles.append(pygame.Rect(280, 360, 100, 50))
+    for tx in range(80, PLAY_W - 80, 40):
+        z.decorations.append(Decoration((tx, 415, 30, 4), (44, 38, 32), "rect"))
+
+    # scattered boulders
+    for bx, by in [(160, 240), (940, 280), (240, 480), (1000, 480), (700, 250)]:
+        z.decorations.append(Decoration((bx, by, 50, 36), (42, 38, 36), "rect", outline=BLACK))
+        z.obstacles.append(pygame.Rect(bx, by, 50, 36))
+
+    # broken floodlight — pole + busted lamp head (still half-flickering)
+    z.decorations.append(Decoration((PLAY_W - 240, 260, 6, 100), (60, 60, 64), "rect"))
+    z.decorations.append(Decoration((PLAY_W - 256, 248, 38, 18), (60, 60, 64), "rect"))
+    z.lamps.append((PLAY_W - 237, 268, 80, (180, 180, 180)))
+
+    # The Miner — near the mine mouth, whose voice doesn't match his lips
+    z.npcs.append(NPC("The Miner", 600, 230, (80, 60, 40), "miner", label="The Miner"))
+
+    z.exits.append(Exit((0, PLAY_H // 2 - 30, 30, 60), "trailer_park",
+                        (PLAY_W - 60, PLAY_H // 2), "< Trailer Park"))
+    zones[z.key] = z
+
     # =========================================================== WOODS
     z = Zone("woods", "The Woods", (22, 28, 24))
     z.entry_narration = "The woods. Trees standing closer than they should. The sinkhole is south."
     z.darkness_radius = 240
+    z.particle_kind = "ash"
+    z.fog_density = 0.7
+    # Distant fires through the trees. Heavy flicker, deep orange.
+    z.lamps.append((140, 480, 60, (190, 70, 30)))
+    z.lamps.append((1080, 420, 60, (190, 70, 30)))
     # scatter of trees forming corridors
     random.seed(7)
     for _ in range(80):

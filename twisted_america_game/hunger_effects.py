@@ -11,9 +11,9 @@ To add sound, load mixer assets and play them inside `apply_hunger_effects`
 based on hunger thresholds.
 """
 
-import pygame
-import random
 import math
+import random
+import pygame
 from settings import *
 
 
@@ -29,6 +29,32 @@ WHISPERS = [
 ]
 
 
+# Peripheral shadow shape presets — (anchor, w, h, draw_fn)
+# anchor: "L"/"R"/"T"/"B" — which edge the shape sits flush against.
+def _shape_vertical_smear(surf, x, y, w, h, alpha):
+    s = pygame.Surface((w, h), pygame.SRCALPHA)
+    s.fill((0, 0, 0, alpha))
+    # roughen the inner edge
+    for yy in range(0, h, 4):
+        cut = random.randint(0, w // 3)
+        pygame.draw.rect(s, (0, 0, 0, 0), (w - cut, yy, cut, 4),
+                         special_flags=pygame.BLEND_RGBA_SUB)
+    surf.blit(s, (x, y))
+
+
+def _shape_half_figure(surf, x, y, w, h, alpha):
+    # bottom-anchored elongated silhouette
+    s = pygame.Surface((w, h), pygame.SRCALPHA)
+    body = pygame.Rect(2, h - 32, w - 4, 32)
+    pygame.draw.rect(s, (0, 0, 0, alpha), body)
+    head = pygame.Rect(w // 2 - 4, h - 46, 8, 10)
+    pygame.draw.rect(s, (0, 0, 0, alpha), head)
+    surf.blit(s, (x, y))
+
+
+_PERIPHERAL_SHAPES = (_shape_vertical_smear, _shape_half_figure)
+
+
 class HungerFx:
     def __init__(self):
         self.time = 0.0
@@ -37,12 +63,16 @@ class HungerFx:
         self.active_whisper = None
         self.active_whisper_time = 0.0
         self._tile_overlay = pygame.Surface((WIDTH, HEIGHT - 100), pygame.SRCALPHA)
-        self._vignette = self._build_vignette()
+        self._heartbeat = pygame.Surface((WIDTH, HEIGHT - 100), pygame.SRCALPHA)
+        self._ab_left = pygame.Surface((28, HEIGHT - 100), pygame.SRCALPHA)
+        self._ab_right = pygame.Surface((28, HEIGHT - 100), pygame.SRCALPHA)
 
-    def _build_vignette(self):
-        s = pygame.Surface((WIDTH, HEIGHT - 100), pygame.SRCALPHA)
-        # darker corners — drawn each frame because alpha varies
-        return s
+        # peripheral shadow state
+        self._shadow_cooldown = random.uniform(8, 16)
+        self._shadow_visible_t = 0.0
+        self._shadow_total = 0.0
+        self._shadow_rect = None
+        self._shadow_draw = None
 
     def update(self, dt, hunger):
         self.time += dt
@@ -60,13 +90,44 @@ class HungerFx:
                 self.active_whisper = random.choice(WHISPERS)
                 self.active_whisper_time = random.uniform(1.4, 2.4)
 
+        # peripheral shadow cadence
+        if self._shadow_visible_t > 0:
+            self._shadow_visible_t -= dt
+        elif hunger >= 60:
+            self._shadow_cooldown -= dt
+            if self._shadow_cooldown <= 0:
+                self._spawn_peripheral_shadow(hunger)
+
+    def _spawn_peripheral_shadow(self, hunger):
+        # frequency: every ~8s at hunger 60 → ~1.5s at hunger 100
+        scale = max(0.0, (hunger - 60) / 40.0)
+        mean = 8.0 - scale * 6.0
+        self._shadow_cooldown = random.uniform(mean * 0.6, mean * 1.4)
+        # pick edge + shape
+        edge = random.choice(("L", "R"))
+        shape_fn = random.choice(_PERIPHERAL_SHAPES)
+        h = random.randint(60, 220)
+        w = random.randint(28, 70)
+        if edge == "L":
+            x = 0
+        else:
+            x = WIDTH - w
+        y = random.randint(40, HEIGHT - 200 - h)
+        self._shadow_rect = pygame.Rect(x, y, w, h)
+        self._shadow_draw = shape_fn
+        # visible time short — these are flickers, not lingering ghosts
+        self._shadow_total = random.uniform(0.18, 0.45)
+        self._shadow_visible_t = self._shadow_total
+
     def draw_overlay(self, surf, hunger, font):
         """Painted on top of the play area each frame."""
         h = hunger
-        play_rect = pygame.Rect(0, 0, WIDTH, HEIGHT - 100)
+
+        # Heartbeat pulse — starts at Hunger 25, quickens with the meter.
+        self._draw_heartbeat(surf, h)
 
         if h <= 25:
-            return  # no effect
+            return
 
         # Desaturation tint (subtle gray wash)
         if h > 25:
@@ -88,7 +149,13 @@ class HungerFx:
                 c = random.choice([(20, 20, 24), (180, 180, 180), (50, 12, 12)])
                 surf.set_at((x, y), c)
 
-        # Stretched shadows around the player position — drawn elsewhere.
+        # Chromatic aberration bands at the screen edges (cheap fake)
+        if h > 60:
+            self._draw_aberration_edges(surf, h)
+
+        # Peripheral shadow flicker
+        if self._shadow_visible_t > 0:
+            self._draw_peripheral_shadow(surf)
 
         # Blood drips at the top edge
         if h > 75:
@@ -105,17 +172,59 @@ class HungerFx:
         # whisper text
         if self.active_whisper:
             s = font.render(self.active_whisper, True, (160, 40, 40))
-            # position drifts
             jx = random.randint(-2, 2)
             jy = random.randint(-2, 2)
             wx = random.randint(80, WIDTH - 200)
             wy = random.randint(40, HEIGHT - 200)
             surf.blit(s, (wx + jx, wy + jy))
 
+    # ---------------- heartbeat ----------------
+    def _draw_heartbeat(self, surf, hunger):
+        if hunger < 25:
+            return
+        # period: 1.4s at hunger 25, 0.55s at hunger 100
+        period = max(0.55, 1.4 - (hunger - 25) / 100.0)
+        phase = (self.time % period) / period * math.pi * 2
+        # double-thump shape: dominant beat + smaller second beat
+        pulse = 0.5 + 0.5 * math.sin(phase)
+        pulse += 0.25 * max(0.0, math.sin(phase - 0.6))
+        # intensity scales with hunger
+        base = 6 + (hunger - 25) * 0.32
+        a = int(base * min(1.4, pulse))
+        if a <= 0:
+            return
+        self._heartbeat.fill((0, 0, 0, a))
+        surf.blit(self._heartbeat, (0, 0))
+
+    # ---------------- chromatic aberration ----------------
+    def _draw_aberration_edges(self, surf, hunger):
+        intensity = min(72, int((hunger - 60) * 2.0))
+        if intensity <= 0:
+            return
+        self._ab_left.fill((180, 20, 20, intensity))
+        self._ab_right.fill((40, 40, 200, int(intensity * 0.8)))
+        surf.blit(self._ab_left, (0, 0), special_flags=pygame.BLEND_RGB_ADD)
+        surf.blit(self._ab_right, (WIDTH - self._ab_right.get_width(), 0),
+                  special_flags=pygame.BLEND_RGB_ADD)
+
+    # ---------------- peripheral shadow ----------------
+    def _draw_peripheral_shadow(self, surf):
+        if not self._shadow_rect or not self._shadow_draw:
+            return
+        # ease in / ease out: peak alpha at middle of life
+        if self._shadow_total <= 0:
+            return
+        t_norm = self._shadow_visible_t / self._shadow_total
+        env = 1.0 - abs(2 * t_norm - 1)  # triangle
+        alpha = int(220 * env)
+        if alpha <= 0:
+            return
+        r = self._shadow_rect
+        self._shadow_draw(surf, r.x, r.y, r.w, r.h, alpha)
+
     def _draw_vignette(self, surf, alpha):
         # cheap vignette: four darkening edges
         s = pygame.Surface((WIDTH, HEIGHT - 100), pygame.SRCALPHA)
-        # corners
         margin = 220
         for i in range(margin):
             a = int(alpha * (i / margin) ** 2)

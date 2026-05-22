@@ -25,6 +25,7 @@ from combat import Combat, ENCOUNTERS
 from hunger_effects import HungerFx
 from save_system import save_game, load_game, has_save
 from lighting import Lighting
+from atmosphere import Atmosphere
 import assets
 import dialogue_data
 
@@ -148,6 +149,8 @@ class Game:
         self.ui = UI()
         self.fx = HungerFx()
         self.lighting = Lighting()
+        self.atmosphere = Atmosphere()
+        self._last_dt = 1 / 60.0
 
         self.state = STATE_MENU
         self.menu_index = 0
@@ -232,6 +235,7 @@ class Game:
 
     def _enter_zone_effects(self):
         z = self.zone
+        self.atmosphere.setup_zone(z)
         if not z.visited:
             z.visited = True
             if z.entry_narration:
@@ -255,6 +259,9 @@ class Game:
 
     # ---------- game over ----------
     def trigger_game_over(self, message):
+        # Clear any active dialogue so its close handler doesn't bounce us
+        # back to STATE_PLAYING after we've set GAME_OVER.
+        self.dialogue = None
         self.game_over_msg = message
         self.state = STATE_GAME_OVER
 
@@ -382,7 +389,10 @@ class Game:
                 d.advance()
         if d.closed:
             self.dialogue = None
-            self.state = STATE_PLAYING
+            # A dialogue effect (e.g. the Reverend's prayer) may have already
+            # moved us to GAME_OVER or ENDING — don't clobber that.
+            if self.state == STATE_DIALOGUE:
+                self.state = STATE_PLAYING
             self.check_endings()
 
     def _key_combat(self, key):
@@ -424,6 +434,9 @@ class Game:
         # check exits first
         for ex in self.zone.exits:
             if self.player.rect.colliderect(ex.rect.inflate(20, 20)):
+                if ex.is_locked(self.zones):
+                    self.show_message(ex.locked_message)
+                    return
                 self.change_zone(ex.target_zone, ex.spawn_xy)
                 return
         # NPC?
@@ -436,7 +449,8 @@ class Game:
                 self.state = STATE_DIALOGUE
                 if self.dialogue.closed:
                     self.dialogue = None
-                    self.state = STATE_PLAYING
+                    if self.state == STATE_DIALOGUE:
+                        self.state = STATE_PLAYING
                     self.check_endings()
                 return
         # enemy?
@@ -449,15 +463,22 @@ class Game:
 
     # ============================================================ UPDATE
     def update(self, dt):
+        self._last_dt = dt
         if self.state == STATE_PLAYING:
             self.fx.update(dt, self.player.hunger)
+            self.atmosphere.update(dt)
             self.player.update(dt, self.zone.obstacles)
             self._check_enemy_collisions()
             self.check_endings()
         elif self.state == STATE_COMBAT:
             self.fx.update(dt, self.player.hunger)
+            self.atmosphere.update(dt)
             if self.combat:
                 self.combat.update(dt)
+        elif self.state in (STATE_DIALOGUE, STATE_INVENTORY):
+            # Keep the world breathing while the player is reading.
+            self.atmosphere.update(dt)
+            self.fx.update(dt, self.player.hunger)
         elif self.state == STATE_INTRO:
             self.intro_timer += dt
             if self.intro_timer > 1.2 and self.intro_index < len(INTRO_LINES) - 1:
@@ -520,9 +541,8 @@ class Game:
         z = self.zone
         # ground
         self.screen.fill(z.ground_color, rect=(0, 0, WIDTH, HEIGHT - 100))
-        # snow specks for atmosphere
-        for sx, sy, *_ in z.snow_specks:
-            self.screen.set_at((int(sx), int(sy)), SNOW)
+        # Drifting particles (snow / ash / dust) sit just above the ground.
+        self.atmosphere.draw_particles(self.screen)
         # decorations
         for d in z.decorations:
             d.draw(self.screen, (0, 0))
@@ -539,21 +559,28 @@ class Game:
         # foreground (e.g. sinkhole rim)
         for f in z.foreground:
             f.draw(self.screen, (0, 0))
-        # Darkness radius — drawn before the hunger overlay so vignette,
-        # drips, and whispers still read clearly on top of the lit area.
-        self.lighting.draw(self.screen, self.player.rect,
-                           z.darkness_radius, self.player.hunger)
-        # Hunger effects on top
+        # Fog mist — drifts in front of the world.
+        self.atmosphere.draw_fog(self.screen)
+        # Lamp pools — additive warm light. Per-lamp flicker still applies.
+        # (The player-centered darkness radius was intentionally removed;
+        # Lighting.draw is still available on the class for future use.)
+        self.lighting.draw_lamps(self.screen, z.lamps, self.fx.time)
+        # Diegetic carved indicators on the left/right edges of the play area.
+        self.ui.draw_diegetic_edges(self.screen, self.player, self._last_dt)
+        # Hunger effects on top — vignette, aberration, heartbeat, whispers.
         self.fx.draw_overlay(self.screen, self.player.hunger, self.fx_font)
 
     def _draw_exit_markers(self):
         font = self.ui.font_sm
         for ex in self.zone.exits:
             r = ex.rect
+            locked = ex.is_locked(self.zones)
+            tile_col = (28, 28, 32) if locked else (60, 60, 70)
+            text_col = (70, 64, 64) if locked else TEXT_DIM
             # darker tile to indicate exit
-            pygame.draw.rect(self.screen, (60, 60, 70), r)
+            pygame.draw.rect(self.screen, tile_col, r)
             pygame.draw.rect(self.screen, BLACK, r, 1)
-            label = font.render(ex.label, True, TEXT_DIM)
+            label = font.render(ex.label, True, text_col)
             # position label nearby
             if r.x < 32:  # left edge
                 self.screen.blit(label, (r.right + 8, r.centery - label.get_height() // 2))
@@ -568,7 +595,10 @@ class Game:
         # show prompt if near an interactable
         for ex in self.zone.exits:
             if self.player.rect.colliderect(ex.rect.inflate(20, 20)):
-                self.ui.draw_interact_prompt(self.screen, ex.label.strip("<>v^ "))
+                if ex.is_locked(self.zones):
+                    self.ui.draw_interact_prompt(self.screen, "(locked)")
+                else:
+                    self.ui.draw_interact_prompt(self.screen, ex.label.strip("<>v^ "))
                 return
         for npc in self.zone.npcs:
             if npc.gone:

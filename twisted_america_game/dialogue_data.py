@@ -436,6 +436,291 @@ def mother_ash(game):
 
 
 # ---------------------------------------------------------------- DISPATCH
+# ----------------------------------------------------------------- REVEREND
+def _accept_prayer(game):
+    game.player.flags["spoke_prayer"] = True
+    game.trigger_game_over(
+        "The chapel goes quiet. Your hands forget how to make a fist.\n"
+        "Your voice forgets how to call for help.\n"
+        "Peace, the Reverend says — from very far away. Peace."
+    )
+
+
+def _refuse_reverend(game):
+    game.player.flags["refused_reverend"] = True
+    # Defiance has a cost — but the door is still open.
+    game.player.add_hunger(3)
+
+
+def reverend(game):
+    p = game.player
+
+    if p.flags.get("spoke_prayer"):
+        # Should never be reached (game ended), but keep a safe fallback.
+        return {
+            "start": {"speaker": "The Reverend", "text": "...", "next": None}
+        }
+
+    if p.flags.get("refused_reverend"):
+        return {
+            "start": {
+                "speaker": "The Reverend",
+                "text": "I knew you would not kneel. The Mother is patient.\n"
+                        "Leave my chapel, doctor. Do not waste my breath again.",
+                "next": None,
+            },
+        }
+
+    return {
+        "start": {
+            "speaker": "The Reverend",
+            "text": "You walked in unbidden. That alone is a sin she will forgive.\n"
+                    "Kneel with me, doctor. The hour is late, and you are tired.",
+            "choices": [
+                ("Kneel.", "pray", None),
+                ("Why are you still here?", "why", None),
+                ("Leave.", None, None),
+            ],
+        },
+        "why": {
+            "speaker": "The Reverend",
+            "text": "The flock went into the woods. I stayed.\n"
+                    "Someone must say the words at the end.\n"
+                    "The Mother taught me the words before you were born.",
+            "next": "ask_pray",
+        },
+        "ask_pray": {
+            "speaker": "The Reverend",
+            "text": "Will you pray with me, doctor? It costs you nothing.",
+            "choices": [
+                ("Yes. Pray.", "pray", None),
+                ("No.", None, _refuse_reverend),
+            ],
+        },
+        "pray": {
+            "speaker": "The Reverend",
+            "text": "Close your eyes.\n\n"
+                    "  Silence in Sin.\n"
+                    "  Darkness hides the truth.\n"
+                    "  Peace in Oblivion.",
+            "next": "confirm",
+        },
+        "confirm": {
+            "speaker": "The Reverend",
+            "text": "Say it with me, now. Mean it.\nDo you accept?",
+            "choices": [
+                ("Yes. I accept.", None, _accept_prayer),
+                ("No. Get out of my head.", None, _refuse_reverend),
+            ],
+        },
+    }
+
+
+# ----------------------------------------------------------------- HOLLIS
+def _give_master_key(game):
+    game.player.key_items.add("Master Key")
+    game.show_message("Hollis slides a key under the door.")
+    game.player.flags["got_master_key"] = True
+
+
+def hollis(game):
+    p = game.player
+    if p.flags.get("got_master_key"):
+        return {
+            "start": {
+                "speaker": "Deputy Hollis",
+                "text": "(Through the door.) Keep it. I'm not coming out. The door stays locked.",
+                "next": None,
+            }
+        }
+    return {
+        "start": {
+            "speaker": "Deputy Hollis",
+            "text": "(Through the door.) Go away. I'm not opening this.",
+            "choices": [
+                ("Deputy, it's Dr. Chen. I was sent.", "sent", None),
+                ("How long have you been in there?", "duration", None),
+                ("Leave him.", None, None),
+            ],
+        },
+        "sent": {
+            "speaker": "Deputy Hollis",
+            "text": "(Through the door.) Sent by who? The sheriff? Sheriff hasn't been the sheriff for two weeks.",
+            "next": "warn",
+        },
+        "duration": {
+            "speaker": "Deputy Hollis",
+            "text": "(Through the door.) Twelve days. Maybe thirteen. I lost count when the radio stopped.",
+            "next": "warn",
+        },
+        "warn": {
+            "speaker": "Deputy Hollis",
+            "text": "(Through the door.) Listen. They walk at night. They don't blink.\n"
+                    "If you have to be out there, you need a key. Evidence room. Top drawer.\n"
+                    "I never went back for it.",
+            "choices": [
+                ("Slide it under. Please.", "give", _give_master_key),
+                ("Keep it. I'll manage.", None, None),
+            ],
+        },
+        "give": {
+            "speaker": "Deputy Hollis",
+            "text": "(Something metal scrapes the floor.)\nThat's the last favor I do anyone. Now go.",
+            "next": None,
+        },
+    }
+
+
+# ----------------------------------------------------------------- JANITOR
+def _mark_janitor(game):
+    game.player.flags["talked_janitor"] = True
+
+
+def janitor(game):
+    p = game.player
+    if p.flags.get("talked_janitor"):
+        return {
+            "start": {
+                "speaker": "The Janitor",
+                "text": "(He sweeps the same patch of floor he was sweeping before.)\n"
+                        "Should be done by recess. Recess is soon.",
+                "next": None,
+            }
+        }
+    return {
+        "start": {
+            "effect": _mark_janitor,
+            "speaker": "The Janitor",
+            "text": "Don't track snow in. The little ones are studying.",
+            "choices": [
+                ("There are no children here.", "denial", None),
+                ("What are they studying?", "study", None),
+                ("Leave.", None, None),
+            ],
+        },
+        "denial": {
+            "speaker": "The Janitor",
+            "text": "(He looks at the empty desks. He looks at his broom.)\n"
+                    "They'll be back. Recess is soon.",
+            "next": "warn",
+        },
+        "study": {
+            "speaker": "The Janitor",
+            "text": "Their letters. They're learning their letters.\n"
+                    "(On the chalkboard: SHE IS COMING. SHE IS COMING. SHE IS COMING.)",
+            "next": "warn",
+        },
+        "warn": {
+            "speaker": "The Janitor",
+            "text": "You should go, doctor. Recess is soon.\nThey don't like being interrupted.",
+            "next": None,
+        },
+    }
+
+
+# ----------------------------------------------------------------- MOTEL GUEST
+def _mark_motel_guest(game):
+    game.player.flags["talked_motel_guest"] = True
+
+
+def motel_guest(game):
+    p = game.player
+    if p.flags.get("talked_motel_guest"):
+        return {
+            "start": {
+                "speaker": "The Guest",
+                "text": "(She stands in the doorway. She is not coming out.)\n"
+                        "The walls are dripping. I think they want me to stay.",
+                "next": None,
+            }
+        }
+    return {
+        "start": {
+            "effect": _mark_motel_guest,
+            "speaker": "The Guest",
+            "text": "Don't come in. The walls are not what they look like.",
+            "choices": [
+                ("How long have you been here?", "duration", None),
+                ("What's wrong with the walls?", "walls", None),
+                ("You should leave with me.", "leave_with_me", None),
+            ],
+        },
+        "duration": {
+            "speaker": "The Guest",
+            "text": "I checked in on a Tuesday. I don't know which Tuesday.\nThe clerk took my plates.",
+            "next": "henderson",
+        },
+        "walls": {
+            "speaker": "The Guest",
+            "text": "They bleed. Just a little, around the edges of the paper.\n"
+                    "At night the room is smaller. In the morning it isn't.",
+            "next": "henderson",
+        },
+        "leave_with_me": {
+            "speaker": "The Guest",
+            "text": "(She does not move.) I tried. I can't make my feet go past the doorway.\n"
+                    "Go. You can still go.",
+            "next": "henderson",
+        },
+        "henderson": {
+            "speaker": "The Guest",
+            "text": "If you see Henderson, tell him Amy says she's sorry.\nHe'll know what for.",
+            "next": None,
+        },
+    }
+
+
+# ----------------------------------------------------------------- MINER
+def _mark_miner(game):
+    game.player.flags["talked_miner"] = True
+
+
+def miner(game):
+    p = game.player
+    if p.flags.get("talked_miner"):
+        return {
+            "start": {
+                "speaker": "The Miner",
+                "text": "(His lips do not move when he speaks. The voice comes from somewhere inside the mine.)\n"
+                        "Go home, doctor.",
+                "next": None,
+            }
+        }
+    return {
+        "start": {
+            "effect": _mark_miner,
+            "speaker": "The Miner",
+            "text": "(His lips move. The voice comes from somewhere else.)\n"
+                    "You shouldn't be here, doctor. The shift ended a long time ago.",
+            "choices": [
+                ("What did you find down there?", "found", None),
+                ("Why are you still standing here?", "still", None),
+                ("Leave.", None, None),
+            ],
+        },
+        "found": {
+            "speaker": "The Miner",
+            "text": "(His lips form different words than what you hear.)\n"
+                    "We found a room. A round room. She was waiting in it.\n"
+                    "We didn't make the room. The room made us.",
+            "next": "warn",
+        },
+        "still": {
+            "speaker": "The Miner",
+            "text": "(The voice answers from below. His mouth shapes 'help'.)\n"
+                    "I'm not standing. I'm being held. There's a difference, doctor.",
+            "next": "warn",
+        },
+        "warn": {
+            "speaker": "The Miner",
+            "text": "(His lips: please go.)\n"
+                    "The sinkhole in the woods is the same room. She built it twice.\n"
+                    "Go that way if you must — but not down here.",
+            "next": None,
+        },
+    }
+
+
 DIALOGUES = {
     "henderson": henderson,
     "jared": jared,
@@ -443,6 +728,11 @@ DIALOGUES = {
     "cory": cory,
     "dealer": dealer,
     "mother_ash": mother_ash,
+    "reverend": reverend,
+    "hollis": hollis,
+    "janitor": janitor,
+    "motel_guest": motel_guest,
+    "miner": miner,
 }
 
 

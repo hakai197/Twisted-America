@@ -1,5 +1,7 @@
 """HUD, dialogue box, menus, ending screens."""
 
+import math
+import random
 import pygame
 import textwrap
 from settings import *
@@ -42,6 +44,76 @@ class UI:
         self.font_md = pygame.font.SysFont("consolas", 20)
         self.font_big = pygame.font.SysFont("consolas", 32, bold=True)
         self.font_title = pygame.font.SysFont("consolas", 56, bold=True)
+        # Diegetic indicator state — drifts the marks slightly per second.
+        self._diegetic_t = 0.0
+
+    # -------------------------------------------------- DIEGETIC CARVED EDGES
+    def draw_diegetic_edges(self, surf, player, dt=0.016):
+        """Carved HP tally on the left, blood streak on the right.
+
+        Drawn on the play area edges, always visible, between the darkness
+        layer and the hunger FX layer.
+        """
+        self._diegetic_t += dt
+        play_h = HEIGHT - 100
+
+        # --- Left edge: HP tally ---
+        # Faint backing strip
+        strip = pygame.Surface((10, play_h), pygame.SRCALPHA)
+        strip.fill((0, 0, 0, 90))
+        surf.blit(strip, (0, 0))
+
+        n_marks = 14
+        cy_start = 60
+        cy_step = (play_h - 120) / max(1, n_marks - 1)
+        hp_pct = player.hp / player.max_hp
+        lit_count = int(round(hp_pct * n_marks))
+        # Marks fill from the bottom up — more lit marks = healthier.
+        for i in range(n_marks):
+            mark_y = int(cy_start + i * cy_step)
+            is_lit = (n_marks - 1 - i) < lit_count
+            col = BONE if is_lit else (38, 36, 36)
+            wobble = int(math.sin(self._diegetic_t * 1.1 + i * 0.7) * 1.5)
+            # ragged scratch — varying length, slight angle
+            length = 9 + (i * 13) % 5 + wobble
+            pygame.draw.line(surf, col, (2, mark_y), (2 + length, mark_y + (i % 2)), 1)
+            if is_lit and i % 4 == 0:
+                # cross-tick on every fourth healthy mark
+                pygame.draw.line(surf, col, (4, mark_y - 2), (4, mark_y + 2), 1)
+
+        # --- Right edge: Hunger blood streak ---
+        streak_x = WIDTH - 10
+        backing = pygame.Surface((10, play_h), pygame.SRCALPHA)
+        backing.fill((0, 0, 0, 90))
+        surf.blit(backing, (WIDTH - 10, 0))
+
+        h_pct = player.hunger / player.max_hunger
+        col_top = 30
+        col_bottom = play_h - 30
+        col_h = col_bottom - col_top
+        fill_h = int(h_pct * col_h)
+        fill_top = col_bottom - fill_h
+        # base dark channel
+        pygame.draw.rect(surf, (28, 8, 10), (streak_x + 2, col_top, 6, col_h))
+        # blood column
+        if fill_h > 0:
+            pygame.draw.rect(surf, BLOOD_RED, (streak_x + 2, fill_top, 6, fill_h))
+            # uneven dripping tendrils at the top of the fill
+            random.seed(int(self._diegetic_t * 0.5) + int(player.hunger))
+            for _ in range(min(4, fill_h // 18)):
+                dx = random.choice((-1, 1, 1))
+                drip_h = random.randint(3, 10)
+                pygame.draw.rect(surf, BLOOD_RED, (streak_x + 2 + dx, fill_top + random.randint(0, 4), 2, drip_h))
+            random.seed()
+
+        # --- Corruption: short carved nicks near the center of the left strip ---
+        if player.corruption > 0:
+            corruption_pct = player.corruption / 100.0
+            nicks = int(corruption_pct * 6)
+            cy = HEIGHT // 2 - 100
+            for i in range(nicks):
+                ny = cy + i * 8
+                pygame.draw.line(surf, CORRUPT_BAR, (1, ny), (5, ny + 2), 1)
 
     # ---------------------------------------------------------------- HUD
     def draw_hud(self, surf, game):
